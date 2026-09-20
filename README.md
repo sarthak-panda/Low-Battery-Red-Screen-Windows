@@ -2,19 +2,19 @@
 
 [![CI](https://github.com/sarthak-panda/Low-Battery-Red-Screen-Windows/actions/workflows/ci.yml/badge.svg)](https://github.com/sarthak-panda/Low-Battery-Red-Screen-Windows/actions/workflows/ci.yml)
 
-A tiny, always-on Windows utility that **turns your whole screen red when the battery is low and the laptop is not charging** — so you notice *before* the machine dies.
+A tiny, always-on Windows utility that **turns your whole screen red when the battery is low and the laptop is not charging** - so you notice *before* the machine dies.
 
 - 🔴 Full-screen red tint across **all monitors** (translucent, so you can still see your work)
-- 🖱️ **Zero interference** — click-through, never takes focus, no taskbar / Alt-Tab entry
-- 🔁 **Self-healing** — starts at every sign-in and restarts itself if it crashes or freezes
-- 🪶 **Tiny** — ~34 KB exe, no dependencies, no admin rights, no network access
+- 🖱️ **Zero interference** - click-through, never takes focus, no taskbar / Alt-Tab entry
+- 🔁 **Self-healing** - starts at every sign-in and restarts itself if it crashes or freezes
+- 🪶 **Tiny** - ~34 KB exe, no dependencies, no admin rights, no network access
 
 ---
 
 ## Install (end users)
 
 1. Open the [**Releases**](../../releases/latest) page and download **`LowBatteryRed-v*-win64.zip`** (or just `LowBatteryRed.exe`).
-2. Extract the zip and **double-click `LowBatteryRed.exe`** (or `Install.bat`). That's it — a confirmation box appears and the app is running.
+2. Extract the zip and **double-click `LowBatteryRed.exe`** (or `Install.bat`). That's it - a confirmation box appears and the app is running.
 3. If Windows **SmartScreen** shows *"Windows protected your PC"*: click **More info → Run anyway**.
    The exe is not code-signed (that costs money), which is the only reason for the warning. You can read every line of the source here, or [build it yourself](#build-from-source).
    Some antivirus tools are wary of unsigned programs that register autostart; if yours flags it, build from source or allow it.
@@ -56,7 +56,7 @@ Nothing else: no services, no drivers, no admin/UAC prompt, no network connectio
 
 ### Configuration
 
-Edit `%LOCALAPPDATA%\LowBatteryRed\config.ini`, save — changes apply within ~2 seconds, **no restart needed**.
+Edit `%LOCALAPPDATA%\LowBatteryRed\config.ini`, save - changes apply within ~2 seconds, **no restart needed**.
 
 ```ini
 [Settings]
@@ -177,3 +177,8 @@ tests/       test_harness.c, fake_schtasks.c, run_tests.sh
 dist/        Install.bat, Test.bat, Uninstall.bat, README.txt  (shipped inside the release zip)
 build.sh     build the exe            package.sh   create release assets
 ```
+
+## Sample Outcome
+
+<img width="2878" height="1798" alt="image" src="https://github.com/user-attachments/assets/27e90948-6f24-4ebd-9044-5329a59e8952" />
+
