@@ -631,6 +631,30 @@ static int DoInstall(BOOL silent)
     return 0;
 }
 
+/* A just-exited process (or an antivirus scan) can keep a file locked for a few
+   milliseconds. Retry briefly instead of leaving files behind. */
+static void DeleteRetry(const WCHAR *path, DWORD ms)
+{
+    for (DWORD t0 = GetTickCount();;) {
+        if (DeleteFileW(path)) return;
+        DWORD e = GetLastError();
+        if (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND) return;
+        if (GetTickCount() - t0 >= ms) return;
+        Sleep(150);
+    }
+}
+
+static void RemoveDirRetry(const WCHAR *path, DWORD ms)
+{
+    for (DWORD t0 = GetTickCount();;) {
+        if (RemoveDirectoryW(path)) return;
+        DWORD e = GetLastError();
+        if (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND) return;
+        if (GetTickCount() - t0 >= ms) return;
+        Sleep(150);
+    }
+}
+
 static int DoUninstall(BOOL silent)
 {
     WCHAR self[MAX_PATH], dir[MAX_PATH], f[MAX_PATH];
@@ -640,7 +664,7 @@ static int DoUninstall(BOOL silent)
     StopRunning(6000);
     if (GetInstallDir(dir)) {
         _snwprintf(f, MAX_PATH - 1, L"%ls\\%ls", dir, EXE_NAME); f[MAX_PATH - 1] = 0;
-        if (_wcsicmp(self, f) != 0) DeleteFileW(f);
+        if (_wcsicmp(self, f) != 0) DeleteRetry(f, 5000);
         else {                                    /* running from the install dir: delete after we exit */
             WCHAR cmd[MAX_PATH * 2 + 80], sys[MAX_PATH];
             GetSystemDirectoryW(sys, MAX_PATH);
@@ -651,8 +675,8 @@ static int DoUninstall(BOOL silent)
             Launch(NULL, cmd, 0, NULL);
         }
         _snwprintf(f, MAX_PATH - 1, L"%ls\\config.ini", dir); f[MAX_PATH - 1] = 0;
-        DeleteFileW(f);
-        RemoveDirectoryW(dir);
+        DeleteRetry(f, 2000);
+        RemoveDirRetry(dir, 3000);
     }
     Say(silent, MB_ICONINFORMATION, L"Low Battery Red has been stopped and removed.");
     return 0;

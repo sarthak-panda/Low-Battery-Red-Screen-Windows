@@ -63,12 +63,42 @@ static BOOL WaitOvl(BOOL wantVisible, int ms)
     return FALSE;
 }
 
+static BOOL WaitCount(int n, int ms)              /* number of LowBatteryRed*.exe processes */
+{
+    for (int t = 0; t < ms; t += 50) { if (CountAll() == n) return TRUE; Sleep(50); }
+    return FALSE;
+}
+static BOOL WaitNoOvl(int ms)
+{
+    for (int t = 0; t < ms; t += 50) { if (!Ovl()) return TRUE; Sleep(50); }
+    return FALSE;
+}
+static BOOL WaitAlpha(int want, int ms)
+{
+    for (int t = 0; t < ms; t += 50) {
+        HWND o = Ovl(); BYTE a = 0; DWORD f = 0; COLORREF k;
+        if (o && GetLayeredWindowAttributes(o, &k, &a, &f) && a == want) return TRUE;
+        Sleep(50);
+    }
+    return FALSE;
+}
+static BOOL WaitGone(const WCHAR *path, int ms)   /* file/dir eventually disappears */
+{
+    for (int t = 0; t < ms; t += 50) { if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) return TRUE; Sleep(50); }
+    return FALSE;
+}
+
+/* Set a battery state, wait (generously - CI machines are slow) until the screen
+   reaches the expected state, then require that it STAYS there for 800 ms
+   (catches flicker / late flips). */
 static void Expect(const char *name, int ac, int pct, int flag, BOOL shown)
 {
     Sim(ac, pct, flag, 0);
-    Sleep(1000);
+    BOOL ok = WaitOvl(shown, 5000);
+    for (DWORD t0 = GetTickCount(); ok && GetTickCount() - t0 < 800; Sleep(20))
+        if (OvlVisible() != shown) ok = FALSE;
     char m[160]; snprintf(m, sizeof m, "%-52s -> screen %s", name, shown ? "RED" : "normal");
-    Check(OvlVisible() == shown, m);
+    Check(ok, m);
 }
 
 static void KillPid(DWORD pid)
@@ -106,10 +136,10 @@ int wmain(void)
     for (int i = 0; i < 400 && !WorkerPid(); i++) Sleep(50);
     printf("  (worker window appeared after %lu ms)\n", GetTickCount() - t0);
     Check(WorkerPid() != 0, "worker started by supervisor");
-    Sleep(500);
-    Check(CountAll() == 2, "exactly 2 processes (supervisor + worker)");
-    RunExe(L"--run", 1500, EXE); RunExe(L"--run", 1500, EXE);
-    Check(CountAll() == 2, "launching --run twice more does not create duplicates");
+    Check(WaitCount(2, 5000), "exactly 2 processes (supervisor + worker)");
+    RunExe(L"--run", 15000, EXE); RunExe(L"--run", 15000, EXE);     /* extra copies must exit by themselves */
+    Sleep(300);
+    Check(WaitCount(2, 5000), "launching --run twice more does not create duplicates");
     Check(!OvlVisible(), "plugged in @80% -> no red screen");
 
     printf("\n=== 2. Overlay properties (unplugged, 15%%) ===\n");
@@ -122,7 +152,7 @@ int wmain(void)
     Check(fg0 == app && foc0 == app, "harness 'work window' has foreground+focus before overlay");
 
     Sim(0, 15, 0, 0);
-    Check(WaitOvl(TRUE, 3000), "unplugged @15% -> overlay appears");
+    Check(WaitOvl(TRUE, 10000), "unplugged @15% -> overlay appears");
     Pump(300);
     HWND o = Ovl();
     LONG ex = (LONG)GetWindowLongW(o, GWL_EXSTYLE);
@@ -173,7 +203,7 @@ int wmain(void)
     Check(GetForegroundWindow() == app, "FOCUS: still unchanged after many show/hide cycles");
 
     printf("\n=== 4. Crash recovery ===\n");
-    Sim(0, 10, 0, 0); WaitOvl(TRUE, 3000);
+    Sim(0, 10, 0, 0); WaitOvl(TRUE, 8000);
     DWORD w1 = WorkerPid(), s1 = SupervisorPid(EXE);
     Check(w1 && s1, "have worker + supervisor pids");
     KillPid(w1);
@@ -208,20 +238,18 @@ int wmain(void)
     Check(WorkerPid() != 0 && WorkerPid() != w4 && OvlVisible(), "replacement worker running, red screen restored");
 
     printf("\n=== 7. Plug in after recovery ===\n");
-    Sim(1, 80, 0, 0); Sleep(800);
-    Check(!OvlVisible(), "charger connected -> overlay gone");
+    Sim(1, 80, 0, 0);
+    Check(WaitOvl(FALSE, 5000), "charger connected -> overlay gone");
 
     printf("\n=== 8. Clean stop + --test mode ===\n");
-    RunExe(L"--uninstall --silent", 15000, EXE);
-    Sleep(500);
-    Check(CountAll() == 0, "--uninstall stops supervisor + worker (0 processes left)");
-    Check(!Ovl(), "no overlay window left behind");
+    RunExe(L"--uninstall --silent", 30000, EXE);
+    Check(WaitCount(0, 8000), "--uninstall stops supervisor + worker (0 processes left)");
+    Check(WaitNoOvl(3000), "no overlay window left behind");
 
     RunExe(L"--test", 0, EXE);
-    Check(WaitOvl(TRUE, 3000), "--test: overlay shown regardless of battery");
+    Check(WaitOvl(TRUE, 10000), "--test: overlay shown regardless of battery");
     Check(WaitOvl(FALSE, 9000) || Ovl() == NULL, "--test: overlay disappears by itself after ~6s");
-    for (int i = 0; i < 60 && CountAll() != 0; i++) Sleep(50);
-    Check(CountAll() == 0, "--test process exited");
+    Check(WaitCount(0, 5000), "--test process exited");
 
 
     printf("\n=== 9. Install / live config / upgrade / uninstall ===\n");
@@ -231,9 +259,8 @@ int wmain(void)
     _snwprintf(cfg,  MAX_PATH - 1, L"%ls\\LowBatteryRed\\config.ini", la);
     GetModuleFileNameW(NULL, self, MAX_PATH);
     Sim(0, 40, 0, 0);                                    /* unplugged 40% = no alarm at default 20% */
-    Check(RunExe(L"--silent", 40000, EXE), "installer ran (no args = install)");
-    for (int i = 0; i < 100 && !WorkerPid(); i++) Sleep(50);
-    Sleep(600);
+    Check(RunExe(L"--silent", 60000, EXE), "installer ran (no args = install)");
+    Check(WaitCount(2, 10000), "installed copy started");
     Check(GetFileAttributesW(inst) != INVALID_FILE_ATTRIBUTES, "exe copied to %LOCALAPPDATA%\\LowBatteryRed");
     Check(GetFileAttributesW(cfg) != INVALID_FILE_ATTRIBUTES, "default config.ini created");
     WCHAR thr[16]; GetPrivateProfileStringW(L"Settings", L"Threshold", L"?", thr, 16, cfg);
@@ -246,18 +273,13 @@ int wmain(void)
     Check(!OvlVisible(), "unplugged @40% -> no overlay (above 20%)");
 
     WritePrivateProfileStringW(L"Settings", L"Threshold", L"50", cfg);
-    Check(WaitOvl(TRUE, 3000), "config.ini Threshold=50 picked up live (no restart) -> overlay @40%");
+    Check(WaitOvl(TRUE, 8000), "config.ini Threshold=50 picked up live (no restart) -> overlay @40%");
     WritePrivateProfileStringW(L"Settings", L"Opacity", L"100", cfg);
-    Sleep(1000);
-    a = 0; fl = 0; GetLayeredWindowAttributes(Ovl(), &key, &a, &fl);
-    Check(a == 255, "config.ini Opacity=100 picked up live (alpha 255)");
+    Check(WaitAlpha(255, 8000), "config.ini Opacity=100 picked up live (alpha 255)");
     WritePrivateProfileStringW(L"Settings", L"Opacity", L"5", cfg);  /* out of range -> clamped to 10% */
-    Sleep(1000);
-    GetLayeredWindowAttributes(Ovl(), &key, &a, &fl);
-    Check(a == 25, "Opacity=5 clamped to 10% (alpha 25)");
+    Check(WaitAlpha(25, 8000), "Opacity=5 clamped to 10% (alpha 25)");
     WritePrivateProfileStringW(L"Settings", L"Threshold", L"garbage", cfg);  /* invalid -> default 20 */
-    Sleep(1000);
-    Check(!OvlVisible(), "invalid Threshold text falls back to default 20 (no crash)");
+    Check(WaitOvl(FALSE, 8000), "invalid Threshold text falls back to default 20 (no crash)");
     WritePrivateProfileStringW(L"Settings", L"Threshold", L"20", cfg);
     WritePrivateProfileStringW(L"Settings", L"Opacity", L"55", cfg);
     Check(GetForegroundWindow() == app, "FOCUS: unchanged through install + config changes");
@@ -265,19 +287,17 @@ int wmain(void)
     DWORD wOld = WorkerPid(), sOld = SupervisorPid(IEXE);
     Check(RunExe(L"--silent", 40000, EXE), "re-running installer (upgrade in place)");
     for (int i = 0; i < 200 && (!WorkerPid() || WorkerPid() == wOld); i++) Sleep(50);
-    Sleep(600);
-    { DWORD p[16]; Check(Procs(IEXE, p, 16) == 2, "after upgrade: still exactly 1 supervisor + 1 worker"); }
+    Check(WaitCount(2, 10000), "after upgrade: still exactly 1 supervisor + 1 worker");
     Check(SupervisorPid(IEXE) != sOld && WorkerPid() != wOld, "after upgrade: fresh processes (old ones replaced)");
 
     Sim(0, 8, 0, 0);
-    Check(WaitOvl(TRUE, 3000), "installed copy: unplugged @8% -> red");
+    Check(WaitOvl(TRUE, 8000), "installed copy: unplugged @8% -> red");
     Check(RunExe(L"--uninstall --silent", 40000, EXE), "uninstaller ran");
-    Sleep(800);
-    Check(CountAll() == 0, "uninstall: all processes gone");
-    Check(!Ovl(), "uninstall: overlay gone");
-    Check(GetFileAttributesW(inst) == INVALID_FILE_ATTRIBUTES, "uninstall: exe deleted");
+    Check(WaitCount(0, 8000), "uninstall: all processes gone");
+    Check(WaitNoOvl(3000), "uninstall: overlay gone");
+    Check(WaitGone(inst, 5000), "uninstall: exe deleted");
     WCHAR d[MAX_PATH]; _snwprintf(d, MAX_PATH - 1, L"%ls\\LowBatteryRed", la);
-    Check(GetFileAttributesW(d) == INVALID_FILE_ATTRIBUTES, "uninstall: install folder removed");
+    Check(WaitGone(d, 5000), "uninstall: install folder removed");
     rl = sizeof rv;
     Check(RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", L"LowBatteryRed", RRF_RT_REG_SZ, NULL, rv, &rl) != ERROR_SUCCESS,
           "uninstall: Run key removed");
