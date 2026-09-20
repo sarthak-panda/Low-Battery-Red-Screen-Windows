@@ -29,7 +29,12 @@ jobs:
       - name: Install MinGW-w64, Wine and a virtual display
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64-x86-64 wine64 xvfb xauth zip
+          # Name `wine` explicitly: `wine64` only *recommends* it, and `wine` is the package
+          # that provides the `wine` / `wineboot` commands. --install-recommends guards
+          # against runners configured to skip recommended packages.
+          sudo apt-get install -y --install-recommends \
+            gcc-mingw-w64-x86-64 wine wine64 libwine fonts-wine xvfb xauth zip
+          command -v wine wineboot xvfb-run x86_64-w64-mingw32-gcc
 
       - name: Lint shell scripts
         run: shellcheck build.sh package.sh tests/run_tests.sh
