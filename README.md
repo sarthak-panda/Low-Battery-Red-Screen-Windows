@@ -184,6 +184,6 @@ build.sh     build the exe            package.sh   create release assets
 
 ## Thanks for Visiting the Repo...
 
-<img width="736" height="414" alt="image" src="https://github.com/user-attachments/assets/638b033b-a608-4d46-9605-d51a3b35273f" />
+<img width="1472" height="828" alt="image" src="https://github.com/user-attachments/assets/638b033b-a608-4d46-9605-d51a3b35273f" />
 
 
