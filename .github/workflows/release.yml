@@ -1,0 +1,67 @@
+name: Release
+
+# Push a tag like v1.0.1 (on a commit that is on main) and this builds, tests and
+# publishes the GitHub Release with the exe, the zip and SHA256SUMS.txt.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write        # create the release / upload assets
+
+jobs:
+  release:
+    name: Test, package and publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Tag must be on main
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+            || { echo "::error::$GITHUB_REF_NAME is not on main - merge first, then tag main"; exit 1; }
+
+      - name: Install MinGW-w64, Wine and a virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64 wine64 xvfb xauth zip
+
+      - name: Release gate - full test suite
+        env:
+          EXTRA_CFLAGS: -Werror
+        run: ./tests/run_tests.sh
+
+      - name: Build release assets
+        run: ./package.sh "${GITHUB_REF_NAME#v}"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(cut -d' ' -f1 build/release/SHA256SUMS.txt | head -1)
+          {
+            echo "## Low Battery Red $GITHUB_REF_NAME"
+            echo
+            echo "Turns the screen red when the battery is low and not charging."
+            echo
+            echo "**Install:** download the \`.zip\`, extract, double-click \`LowBatteryRed.exe\`. "
+            echo "SmartScreen: *More info -> Run anyway* (the exe is unsigned). See the README for details."
+            echo
+            echo "SHA-256 of \`LowBatteryRed.exe\`: \`$sha\`"
+            echo
+            gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+              -f tag_name="$GITHUB_REF_NAME" --jq .body || true
+          } > notes.md
+          flags=""
+          case "$GITHUB_REF_NAME" in *-*) flags="--prerelease" ;; esac
+          # shellcheck disable=SC2086
+          gh release create "$GITHUB_REF_NAME" \
+            build/release/LowBatteryRed.exe \
+            build/release/LowBatteryRed-v*-win64.zip \
+            build/release/SHA256SUMS.txt \
+            --title "Low Battery Red $GITHUB_REF_NAME" \
+            --notes-file notes.md --verify-tag $flags

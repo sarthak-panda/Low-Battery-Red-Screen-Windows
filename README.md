@@ -1,5 +1,7 @@
 # Low Battery Red Screen (Windows)
 
+[![CI](https://github.com/sarthak-panda/Low-Battery-Red-Screen-Windows/actions/workflows/ci.yml/badge.svg)](https://github.com/sarthak-panda/Low-Battery-Red-Screen-Windows/actions/workflows/ci.yml)
+
 A tiny, always-on Windows utility that **turns your whole screen red when the battery is low and the laptop is not charging** — so you notice *before* the machine dies.
 
 - 🔴 Full-screen red tint across **all monitors** (translucent, so you can still see your work)
@@ -125,7 +127,7 @@ pacman -S --needed mingw-w64-x86_64-gcc zip
 ```
 `build.sh` honours `CC` and `WINDRES` if your toolchain uses different names.
 
-The release binary is built with `-Wl,--no-insert-timestamp`, so builds from the same source are reproducible.
+The exe is built with `-Wl,--no-insert-timestamp`, so the same source built with the same toolchain gives a byte-identical exe (CI checks this on every run; a different MinGW version may produce different bytes).
 
 ## Tests
 
@@ -136,7 +138,7 @@ sudo apt install gcc-mingw-w64-x86-64 wine64 xvfb
 ./tests/run_tests.sh
 ```
 
-It uses a *test build* (`-DLBR_TEST`) that differs from the release build only in two ways: the battery status is read from a file (`LBR_SIM_FILE`) so scenarios can be simulated, and timers are faster. It checks (72 assertions):
+It uses a *test build* (`-DLBR_TEST`) that differs from the release build only in two ways: the battery status is read from a file (`LBR_SIM_FILE`) so scenarios can be simulated, and timers are faster. It checks:
 
 - overlay covers the full virtual screen exactly; window styles; opacity; click-through hit-testing
 - **focus is never stolen** (foreground/active/focus window unchanged, with a positive control proving the check can detect a steal)
@@ -145,13 +147,33 @@ It uses a *test build* (`-DLBR_TEST`) that differs from the release build only i
 - install / upgrade / uninstall, Run-key registration, live `config.ini` reload, invalid config values
 - the generated Task Scheduler XML (captured via a `schtasks.exe` test double), including the fallback when a logon trigger is rejected
 
-**What the tests can't cover:** real battery hardware and real Windows DWM compositing (translucency). Use the [quick real-world check](#quick-real-world-check) after installing.
+**What the Wine tests can't cover:** real battery hardware and real Windows DWM compositing (translucency). Use the [quick real-world check](#quick-real-world-check) after installing.
+
+## CI / CD (GitHub Actions)
+
+| Workflow | Runs on | What it does |
+|---|---|---|
+| [`ci.yml`](.github/workflows/ci.yml) | every push to `main` and every pull request | shellcheck → reproducible-build check → full Wine test suite (`-Werror`) → packaging dry-run. Uploads the test log, the CI-built exe and a run summary. |
+| `ci.yml` › *Native Windows run* | after the job above | **Experimental, non-blocking.** Runs the same harness on a real `windows-latest` runner and verifies the real Task Scheduler round-trip (task created, battery restrictions off, removed on uninstall). |
+| [`release.yml`](.github/workflows/release.yml) | pushing a tag `vX.Y.Z` | checks the tag is on `main`, re-runs the full suite as a gate, builds, and publishes the GitHub Release with `LowBatteryRed.exe`, the zip and `SHA256SUMS.txt`. |
+
+**Cutting a release**
+
+```sh
+git checkout main && git pull
+git tag v1.0.1
+git push origin v1.0.1      # CI tests, packages and publishes the release
+```
+
+Tags containing a `-` (e.g. `v1.1.0-rc1`) are published as pre-releases.
+
 
 ## Repository layout
 
 ```
 src/         lowbatteryred.c, app.manifest, app.rc
 tests/       test_harness.c, fake_schtasks.c, run_tests.sh
+.github/workflows/   ci.yml, release.yml
 dist/        Install.bat, Test.bat, Uninstall.bat, README.txt  (shipped inside the release zip)
 build.sh     build the exe            package.sh   create release assets
 ```

@@ -1,0 +1,149 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# a newer push to the same branch/PR cancels the older run
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Main gate: cross-compile the Windows exe and run the FULL test suite against
+  # the real Windows binary under Wine + a virtual display (same as tests/run_tests.sh).
+  # ---------------------------------------------------------------------------
+  build-and-test:
+    name: Build and test (Wine)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MinGW-w64, Wine and a virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64 wine64 xvfb xauth zip
+
+      - name: Lint shell scripts
+        run: shellcheck build.sh package.sh tests/run_tests.sh
+
+      - name: Reproducible-build check (same source -> identical exe)
+        run: |
+          ./build.sh
+          a=$(sha256sum build/LowBatteryRed.exe | cut -d' ' -f1)
+          rm -rf build
+          ./build.sh
+          b=$(sha256sum build/LowBatteryRed.exe | cut -d' ' -f1)
+          echo "build 1: $a"
+          echo "build 2: $b"
+          test "$a" = "$b"
+
+      - name: Run test suite (warnings are errors)
+        shell: bash          # -o pipefail, so a failing suite fails the step even through tee
+        env:
+          EXTRA_CFLAGS: -Werror
+        run: ./tests/run_tests.sh 2>&1 | tee test-output.txt
+
+      - name: Show results in the run summary
+        if: always()
+        run: |
+          {
+            echo '### Test results (Wine)'
+            echo '```'
+            grep -E '^===|FAIL|RESULT' test-output.txt || echo 'no output captured'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Package release assets (dry run)
+        run: ./package.sh 0.0.0-ci
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output
+          path: test-output.txt
+          retention-days: 14
+
+      - name: Upload binaries for the native-Windows job
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-test-binaries
+          path: |
+            build/LowBatteryRed_test.exe
+            build/test_harness.exe
+          retention-days: 7
+
+      - name: Upload CI build of the exe (unsigned)
+        uses: actions/upload-artifact@v4
+        with:
+          name: LowBatteryRed-ci-build
+          path: build/release/LowBatteryRed.exe
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # EXPERIMENTAL: the same harness on a real Windows runner (real Win32, real
+  # Task Scheduler). Non-blocking (continue-on-error) until it has proven stable
+  # on GitHub's runners - then remove `continue-on-error` and make it required.
+  # ---------------------------------------------------------------------------
+  windows-native:
+    name: Native Windows run (experimental)
+    needs: build-and-test
+    runs-on: windows-latest
+    continue-on-error: true
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-test-binaries
+          path: bin
+
+      - name: Real Task Scheduler - import, verify settings, remove
+        shell: pwsh
+        working-directory: bin
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # installs the test build to %LOCALAPPDATA% and registers autostart + task
+          Start-Process .\LowBatteryRed_test.exe -ArgumentList '--silent' -Wait
+
+          $raw = (schtasks /Query /TN LowBatteryRed /XML | Out-String)
+          if ($LASTEXITCODE -ne 0) { throw "Scheduled task 'LowBatteryRed' was not created:`n$raw" }
+          $s = ([xml]$raw).Task.Settings
+          Write-Host "DisallowStartIfOnBatteries = $($s.DisallowStartIfOnBatteries)"
+          Write-Host "StopIfGoingOnBatteries     = $($s.StopIfGoingOnBatteries)"
+          Write-Host "ExecutionTimeLimit         = $($s.ExecutionTimeLimit)"
+          if ($s.DisallowStartIfOnBatteries -ne 'false') { throw 'task would not start on battery' }
+          if ($s.StopIfGoingOnBatteries     -ne 'false') { throw 'task would be killed when unplugged' }
+          if ($s.ExecutionTimeLimit         -ne 'PT0S')  { throw 'task has an execution time limit' }
+
+          $n = @(Get-Process -Name LowBatteryRed -ErrorAction SilentlyContinue).Count
+          if ($n -ne 2) { throw "expected supervisor + worker (2 processes), found $n" }
+
+          Start-Process .\LowBatteryRed_test.exe -ArgumentList '--uninstall','--silent' -Wait
+          cmd /c "schtasks /Query /TN LowBatteryRed >nul 2>&1"
+          if ($LASTEXITCODE -eq 0) { throw 'scheduled task still exists after uninstall' }
+          Write-Host 'Task Scheduler round trip OK'
+
+      - name: Run the full harness natively
+        shell: pwsh
+        working-directory: bin
+        run: |
+          $p = Start-Process .\test_harness.exe -Wait -NoNewWindow -PassThru -RedirectStandardOutput out.txt
+          Get-Content out.txt
+          exit $p.ExitCode
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-native-output
+          path: bin/out.txt
+          retention-days: 14
+          if-no-files-found: ignore

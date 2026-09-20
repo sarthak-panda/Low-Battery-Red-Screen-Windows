@@ -6,7 +6,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 "$ROOT/build.sh" test
 
 export WINEDEBUG=-all
-export WINEPREFIX=${WINEPREFIX:-/tmp/lbr-wineprefix}
+export WINEPREFIX="${WINEPREFIX:-/tmp/lbr-wineprefix}"
 export WINEDLLOVERRIDES="schtasks.exe=n"      # use our schtasks test-double, not Wine's built-in
 
 xvfb-run -a wineboot -u >/dev/null 2>&1 || true
